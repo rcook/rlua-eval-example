@@ -1,18 +1,25 @@
 mod lua {
-    pub fn eval<T: for<'lua> rlua::FromLuaMulti<'lua>>(script: &str) -> rlua::Result<T> {
+    pub trait Evaluatable: for<'lua> rlua::FromLuaMulti<'lua> {}
+    pub type EvalError = rlua::Error;
+    pub type EvalResult<T> = std::result::Result<T, EvalError>;
+
+    // Default implementation for types that have FromLuaMulti implementations
+    impl<T: for<'lua> rlua::FromLuaMulti<'lua>> Evaluatable for T {}
+
+    pub fn eval<T: Evaluatable>(script: &str) -> EvalResult<T> {
         rlua::Lua::new().context(|lua_ctx| lua_ctx.load(script).eval())
     }
 }
 
 mod js {
-    pub type Result<T> = std::result::Result<T, &'static str>;
-
-    pub trait FromJS: Default {}
+    pub trait Evaluatable: Default {}
+    pub type EvalError = &'static str;
+    pub type EvalResult<T> = std::result::Result<T, EvalError>;
 
     // Default implementation for types that are sized and have defaults
-    impl<T: ?Sized + Default> FromJS for T {}
+    impl<T: ?Sized + Default> Evaluatable for T {}
 
-    pub fn eval<T: FromJS>(_script: &str) -> Result<T> {
+    pub fn eval<T: Evaluatable>(_script: &str) -> EvalResult<T> {
         Ok(T::default())
     }
 }
@@ -23,10 +30,10 @@ mod scripting {
     use std::sync::Arc;
 
     // https://www.reddit.com/r/rust/comments/fkrakp/rlua_how_do_i_make_a_generic_eval_function/
-    pub trait Scriptable: for<'lua> rlua::FromLuaMulti<'lua> + js::FromJS {}
+    pub trait Evaluatable: lua::Evaluatable + js::Evaluatable {}
 
     // Default implementation for types that can be converted from Lua and JavaScript
-    impl<T: for<'lua> rlua::FromLuaMulti<'lua> + js::FromJS> Scriptable for T {}
+    impl<T: lua::Evaluatable + js::Evaluatable> Evaluatable for T {}
 
     #[derive(Debug, Clone)]
     pub enum Error {
@@ -49,6 +56,18 @@ mod scripting {
         }
     }
 
+    impl std::convert::From<lua::EvalError> for Error {
+        fn from(error: lua::EvalError) -> Self {
+            Error::Lua(Arc::new(error))
+        }
+    }
+
+    impl std::convert::From<js::EvalError> for Error {
+        fn from(error: js::EvalError) -> Self {
+            Error::JavaScript(error.to_string())
+        }
+    }
+
     pub type Result<T> = std::result::Result<T, Error>;
 
     pub enum Language {
@@ -56,12 +75,10 @@ mod scripting {
         JavaScript,
     }
 
-    pub fn eval<T: Scriptable>(language: Language, script: &str) -> Result<T> {
+    pub fn eval<T: Evaluatable>(language: Language, script: &str) -> Result<T> {
         match language {
-            Language::Lua => lua::eval(script).map_err(|error| Error::Lua(Arc::new(error))),
-            Language::JavaScript => {
-                js::eval(script).map_err(|message| Error::JavaScript(message.to_string()))
-            }
+            Language::Lua => Ok(lua::eval(script)?),
+            Language::JavaScript => Ok(js::eval(script)?),
         }
     }
 }
