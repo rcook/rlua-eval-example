@@ -37,7 +37,7 @@ mod scripting {
 
     #[derive(Debug, Clone)]
     pub enum Error {
-        Lua(Arc<rlua::Error>),
+        Lua(Arc<lua::EvalError>),
         JavaScript(String),
     }
 
