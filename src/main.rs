@@ -1,16 +1,19 @@
 mod lua {
-    use rlua::{FromLuaMulti, Lua, Result};
-
-    pub fn eval<R: for<'lua> FromLuaMulti<'lua>>(script: &str) -> Result<R> {
-        Lua::new().context(|lua_ctx| lua_ctx.load(script).eval())
+    pub fn eval<T: for<'lua> rlua::FromLuaMulti<'lua>>(script: &str) -> rlua::Result<T> {
+        rlua::Lua::new().context(|lua_ctx| lua_ctx.load(script).eval())
     }
 }
 
 mod js {
     pub type Result<T> = std::result::Result<T, &'static str>;
 
-    pub fn eval<R: Default>(_script: &str) -> Result<R> {
-        Ok(R::default())
+    pub trait FromJS: Default {}
+
+    // Default implementation for types that are sized and have defaults
+    impl<T: ?Sized + Default> FromJS for T {}
+
+    pub fn eval<T: FromJS>(_script: &str) -> Result<T> {
+        Ok(T::default())
     }
 }
 
@@ -18,6 +21,12 @@ mod scripting {
     use super::js;
     use super::lua;
     use std::sync::Arc;
+
+    // https://www.reddit.com/r/rust/comments/fkrakp/rlua_how_do_i_make_a_generic_eval_function/
+    pub trait Scriptable: for<'lua> rlua::FromLuaMulti<'lua> + js::FromJS {}
+
+    // Default implementation for types that can be converted from Lua and JavaScript
+    impl<T: for<'lua> rlua::FromLuaMulti<'lua> + js::FromJS> Scriptable for T {}
 
     #[derive(Debug, Clone)]
     pub enum Error {
@@ -47,10 +56,7 @@ mod scripting {
         JavaScript,
     }
 
-    pub fn eval<R: for<'lua> rlua::FromLuaMulti<'lua> + Default>(
-        language: Language,
-        script: &str,
-    ) -> Result<R> {
+    pub fn eval<T: Scriptable>(language: Language, script: &str) -> Result<T> {
         match language {
             Language::Lua => lua::eval(script).map_err(|error| Error::Lua(Arc::new(error))),
             Language::JavaScript => {
